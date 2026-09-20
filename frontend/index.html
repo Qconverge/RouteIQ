@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RouteIQ Dashboard</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- MapLibre GL JS -->
+    <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <style>
+        body { margin: 0; padding: 0; font-family: 'Inter', sans-serif; display: flex; height: 100vh; overflow: hidden; background: #f3f4f6;}
+        #sidebar { width: 420px; background: white; padding: 1.5rem; overflow-y: auto; box-shadow: 2px 0 10px rgba(0,0,0,0.1); z-index: 10; display: flex; flex-direction: column; gap: 1.5rem; }
+        #map-container { flex: 1; position: relative; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+        
+        .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 0.5rem; padding: 1rem; }
+        .btn { background: #3b82f6; color: white; padding: 0.5rem 1rem; border-radius: 0.375rem; font-weight: 500; text-align: center; cursor: pointer; transition: background 0.2s; }
+        .btn:hover { background: #2563eb; }
+        .btn:disabled { background: #9ca3af; cursor: not-allowed; }
+        
+        .stage-list li { display: flex; align-items: center; gap: 0.5rem; color: #6b7280; margin-bottom: 0.5rem; font-size: 0.875rem;}
+        .stage-list li.active { color: #2563eb; font-weight: 500; }
+        .stage-list li.done { color: #10b981; }
+        
+        .loader { border: 2px solid #f3f3f3; border-top: 2px solid #3b82f6; border-radius: 50%; width: 14px; height: 14px; animation: spin 1s linear infinite; display: inline-block; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        #nominatim-results { position: absolute; z-index: 20; background: white; width: 100%; border: 1px solid #e5e7eb; border-radius: 0.375rem; max-height: 200px; overflow-y: auto; display: none; }
+        .search-result { padding: 0.5rem; cursor: pointer; border-bottom: 1px solid #f3f4f6; font-size: 0.875rem; }
+        .search-result:hover { background: #f3f4f6; }
+    </style>
+</head>
+<body>
+
+    <!-- Sidebar -->
+    <div id="sidebar">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-800">RouteIQ Dashboard</h1>
+            <p class="text-sm text-gray-500 mt-1">System-Optimal Multi-Vehicle Routing</p>
+        </div>
+
+        <!-- 1. Scenario Setup -->
+        <div class="card">
+            <h2 class="font-semibold text-gray-700 mb-3 border-b pb-2">1. Scenario Setup</h2>
+            
+            <div class="mb-3 relative">
+                <label class="block text-xs font-medium text-gray-600 mb-1">Search Location (Nominatim)</label>
+                <input type="text" id="search-input" class="w-full border rounded px-2 py-1 text-sm" placeholder="e.g. Navrangpura, Ahmedabad">
+                <div id="nominatim-results"></div>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-2 mb-3">
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 mb-1">Center Lat</label>
+                    <input type="number" id="lat" class="w-full border rounded px-2 py-1 text-sm" value="23.0285" step="0.0001">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 mb-1">Center Lon</label>
+                    <input type="number" id="lon" class="w-full border rounded px-2 py-1 text-sm" value="72.5546" step="0.0001">
+                </div>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-2 mb-4">
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 mb-1">Vehicles</label>
+                    <input type="number" id="num-veh" class="w-full border rounded px-2 py-1 text-sm" value="50">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 mb-1">Radius (m)</label>
+                    <input type="number" id="radius" class="w-full border rounded px-2 py-1 text-sm" value="1000">
+                </div>
+            </div>
+            
+            <button id="btn-create" class="btn w-full mb-2">Create Scenario</button>
+            <div id="scenario-info" class="text-xs text-gray-500 hidden bg-gray-50 p-2 rounded"></div>
+        </div>
+
+        <!-- 2. Run Optimizer -->
+        <div class="card hidden" id="card-optimizer">
+            <h2 class="font-semibold text-gray-700 mb-3 border-b pb-2">2. Traffic & Optimization</h2>
+            
+            <div class="flex gap-2 mb-4">
+                <select id="traffic-type" class="border rounded px-2 py-1 text-sm flex-1">
+                    <option value="normal">Normal</option>
+                    <option value="moderate" selected>Moderate</option>
+                    <option value="heavy">Heavy (Rush Hour)</option>
+                    <option value="blockage">Blockage</option>
+                </select>
+                <button id="btn-traffic" class="btn bg-orange-500 hover:bg-orange-600 px-3">Inject Traffic</button>
+            </div>
+            
+            <button id="btn-optimize" class="btn w-full bg-indigo-600 hover:bg-indigo-700">Run QPSO-Hybrid Optimizer</button>
+            
+            <div id="progress-container" class="mt-4 hidden">
+                <h3 class="text-xs font-semibold text-gray-600 mb-2 uppercase">Progress</h3>
+                <ul class="stage-list" id="stage-list">
+                    <li id="stage-loading_graph"><span>○</span> Loading Graph</li>
+                    <li id="stage-candidate_generation"><span>○</span> Candidate Generation</li>
+                    <li id="stage-qpso_selecting"><span>○</span> QPSO Selecting</li>
+                    <li id="stage-local_search"><span>○</span> Local Search</li>
+                    <li id="stage-stability_check"><span>○</span> Stability Check</li>
+                    <li id="stage-complete"><span>○</span> Complete</li>
+                </ul>
+                <div id="ws-msg" class="text-xs text-gray-500 italic mt-2 p-2 bg-gray-50 rounded"></div>
+            </div>
+        </div>
+
+        <!-- 3. Results -->
+        <div class="card hidden" id="card-results">
+            <h2 class="font-semibold text-gray-700 mb-3 border-b pb-2">3. Results (KPIs)</h2>
+            <div class="grid grid-cols-2 gap-2 mb-4">
+                <div class="bg-gray-50 p-2 rounded border">
+                    <div class="text-[10px] uppercase text-gray-500 font-semibold">Travel Time (s)</div>
+                    <div class="text-lg font-bold text-gray-800" id="kpi-time">-</div>
+                </div>
+                <div class="bg-gray-50 p-2 rounded border">
+                    <div class="text-[10px] uppercase text-gray-500 font-semibold">Distance (m)</div>
+                    <div class="text-lg font-bold text-gray-800" id="kpi-dist">-</div>
+                </div>
+                <div class="bg-gray-50 p-2 rounded border">
+                    <div class="text-[10px] uppercase text-gray-500 font-semibold">Congestion (Σ load²)</div>
+                    <div class="text-lg font-bold text-gray-800" id="kpi-cost">-</div>
+                </div>
+                <div class="bg-gray-50 p-2 rounded border">
+                    <div class="text-[10px] uppercase text-gray-500 font-semibold">Runtime (s)</div>
+                    <div class="text-lg font-bold text-gray-800" id="kpi-runtime">-</div>
+                </div>
+            </div>
+            
+            <!-- Convergence Chart -->
+            <div>
+                <div class="text-[10px] uppercase text-gray-500 font-semibold mb-1">Convergence Curve</div>
+                <div style="position: relative; height: 160px; width: 100%;">
+                    <canvas id="chart-convergence"></canvas>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 4. Benchmarks -->
+        <div class="card hidden" id="card-benchmarks">
+            <h2 class="font-semibold text-gray-700 mb-3 border-b pb-2">4. Baseline Benchmarks</h2>
+            <button id="btn-benchmark" class="btn w-full bg-teal-600 hover:bg-teal-700 mb-3">Run Benchmark Suite</button>
+            <!-- Color legend — always visible once chart is drawn -->
+            <div id="benchmark-legend" class="hidden flex gap-4 justify-center mb-2 flex-wrap text-xs font-semibold">
+                <span class="flex items-center gap-1"><span style="display:inline-block;width:14px;height:14px;background:#3b82f6;border-radius:3px;"></span>Dijkstra</span>
+                <span class="flex items-center gap-1"><span style="display:inline-block;width:14px;height:14px;background:#f59e0b;border-radius:3px;"></span>Greedy</span>
+                <span class="flex items-center gap-1"><span style="display:inline-block;width:14px;height:14px;background:#10b981;border-radius:3px;"></span>QPSO Hybrid</span>
+            </div>
+            <p class="text-xs text-gray-500 text-center hidden" id="benchmark-note">Solid = Travel Time &nbsp;|&nbsp; Hatched = Congestion Cost</p>
+            <!-- Chart 1: Travel Time -->
+            <div id="benchmark-chart-container" class="hidden">
+                <p class="text-xs font-semibold text-gray-600 text-center mb-1">Travel Time (s) &mdash; lower is better</p>
+                <div style="position:relative;height:130px;width:100%;">
+                    <canvas id="chart-benchmark"></canvas>
+                </div>
+                <!-- Chart 2: Congestion Cost -->
+                <p class="text-xs font-semibold text-gray-600 text-center mt-3 mb-1">Congestion Cost (&#931; load&sup2;) &mdash; lower is better</p>
+                <div style="position:relative;height:130px;width:100%;">
+                    <canvas id="chart-benchmark-cong"></canvas>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 5. Limitations & Honesty Pass -->
+        <div class="card bg-gray-50 border-gray-300">
+            <h2 class="font-semibold text-gray-700 mb-2 border-b pb-2 text-sm">System Limitations (Honesty Pass)</h2>
+            <ul class="text-[11px] text-gray-600 space-y-2 list-disc pl-4">
+                <li><b>Simulated Congestion:</b> Traffic is BPR-calibrated simulation, not live data. Pending real-world sensor validation.</li>
+                <li><b>No Global Optimality:</b> This is a metaheuristic. It provides measured, empirical improvements over baselines, not mathematical guarantees of global optimality.</li>
+                <li><b>"Quantum-Inspired":</b> This is a classical algorithm running on standard hardware, inspired by quantum-mechanical formalism (wave functions). It does <i>not</i> provide quantum hardware speedup.</li>
+            </ul>
+        </div>
+
+    </div>
+
+    <!-- Map Area -->
+    <div id="map-container">
+        <div id="map"></div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

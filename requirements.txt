@@ -1,0 +1,26 @@
+# RouteIQ — Python dependencies
+# Phase 1
+osmnx>=1.9.3
+networkx>=3.3
+numpy>=1.26.4
+scipy>=1.13.0
+shapely>=2.0.5
+geopandas>=0.14.4
+requests>=2.32.3
+tqdm>=4.66.4
+
+# Phase 2 (Yen's k-shortest)
+# (uses networkx built-ins + custom impl — no extra dep)
+
+# Phase 3-4 (QUBO + QPSO)
+# (pure numpy — no extra dep)
+
+# Phase 6-7 (API)
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.1
+sqlmodel>=0.0.19
+httpx>=0.27.0
+
+# Phase 9 (optional server-side rendering / data export)
+pandas>=2.2.2
+matplotlib>=3.9.0   # for offline plot generation / acceptance tests
