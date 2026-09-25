@@ -7,7 +7,7 @@ Uses SQLModel (wraps SQLAlchemy + Pydantic) for zero-boilerplate ORM.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
@@ -53,8 +53,8 @@ class ScenarioBase(SQLModel):
     # Lifecycle
     status:         str   = Field(default="created")   # created|optimising|complete|error
     current_stage:  str   = Field(default="")
-    created_at:     datetime = Field(default_factory=datetime.utcnow)
-    updated_at:     datetime = Field(default_factory=datetime.utcnow)
+    created_at:     datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at:     datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class Scenario(ScenarioBase, table=True):
