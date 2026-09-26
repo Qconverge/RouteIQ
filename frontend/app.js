@@ -1,5 +1,6 @@
-const API_BASE = "http://127.0.0.1:8000";
-const WS_BASE = "ws://127.0.0.1:8000";
+// Dynamically detect base URL (works locally, on Render, Codespaces, or any host)
+const API_BASE = window.location.origin;
+const WS_BASE = (window.location.protocol === "https:" ? "wss://" : "ws://") + window.location.host;
 
 let currentScenarioId = null;
 let map = null;
@@ -90,6 +91,10 @@ document.getElementById('btn-create').addEventListener('click', async () => {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(payload)
         });
+        if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.detail || `Server error (${res.status})`);
+        }
         const data = await res.json();
         currentScenarioId = data.id;
         
@@ -107,7 +112,8 @@ document.getElementById('btn-create').addEventListener('click', async () => {
         }
         
     } catch (err) {
-        alert("Failed to create scenario");
+        console.error("Scenario creation error:", err);
+        alert(`Failed to create scenario: ${err.message || err}`);
     } finally {
         btn.disabled = false;
         btn.innerHTML = 'Create Scenario';
@@ -129,10 +135,15 @@ document.getElementById('btn-traffic').addEventListener('click', async () => {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ scenario_type: type, num_vehicles: num_veh, seed: Date.now() % 1000 })
         });
+        if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.detail || `Server error (${res.status})`);
+        }
         const data = await res.json();
         alert(`Injected ${data.congestion_type} congestion (BPR simulated) on ${data.loaded_edges} edges.`);
     } catch(err) {
-        alert("Failed to inject traffic");
+        console.error("Traffic injection error:", err);
+        alert(`Failed to inject traffic: ${err.message || err}`);
     } finally {
         btn.disabled = false;
     }
@@ -189,13 +200,18 @@ document.getElementById('btn-optimize').addEventListener('click', async () => {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ seed: 42, n_vehicles_congestion: num_veh })
         });
+        if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.detail || `Server error (${res.status})`);
+        }
         
         const data = await res.json();
         if (data.ws_url) {
             connectWebSocket(data.ws_url);
         }
     } catch(err) {
-        alert("Failed to start optimizer");
+        console.error("Optimizer error:", err);
+        alert(`Failed to start optimizer: ${err.message || err}`);
         btn.disabled = false;
     }
 });
@@ -323,13 +339,18 @@ document.getElementById('btn-benchmark').addEventListener('click', async () => {
     try {
         const num_veh = parseInt(document.getElementById('num-veh').value);
         const res = await fetch(`${API_BASE}/scenarios/${currentScenarioId}/benchmark?seed=42&n_vehicles_congestion=${num_veh}`);
+        if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.detail || `Server error (${res.status})`);
+        }
         const data = await res.json();
         
         document.getElementById('benchmark-chart-container').classList.remove('hidden');
         drawBenchmarkChart(data.results);
         
     } catch(err) {
-        alert("Failed to run benchmark");
+        console.error("Benchmark error:", err);
+        alert(`Failed to run benchmark: ${err.message || err}`);
     } finally {
         btn.disabled = false;
         btn.innerHTML = 'Run Benchmark Suite';
