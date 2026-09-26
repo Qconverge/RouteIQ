@@ -31,12 +31,19 @@ import logging
 import random
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, select
 
@@ -46,8 +53,15 @@ sys.path.insert(0, str(_HERE))                    # api/ — for models.py
 sys.path.insert(0, str(_HERE.parent / "core"))    # core/ — for phase*.py
 
 from models import (
-    BenchmarkResult, OptimiseRequest, Scenario, ScenarioCreate,
-    ScenarioRead, SimulateTrafficRequest, create_db, engine, get_session,
+    BenchmarkResult,
+    OptimiseRequest,
+    Scenario,
+    ScenarioCreate,
+    ScenarioRead,
+    SimulateTrafficRequest,
+    create_db,
+    engine,
+    get_session,
 )
 
 log = logging.getLogger("phase7")
@@ -164,7 +178,11 @@ async def _get_or_load_graph(scenario: Scenario) -> Any:
         _graph_cache[scenario.id] = G
         return G
 
-    from phase1_world_state import download_graph, enrich_graph, simplify_graph_for_routing
+    from phase1_world_state import (
+        download_graph,
+        enrich_graph,
+        simplify_graph_for_routing,
+    )
     G = await asyncio.to_thread(
         download_graph,
         center=(scenario.center_lat, scenario.center_lon),
@@ -202,7 +220,7 @@ def _db_update(scenario_id: int, stage: str, status: str = "optimising", **kwarg
         if sc:
             sc.current_stage = stage
             sc.status        = status
-            sc.updated_at    = datetime.utcnow()
+            sc.updated_at    = datetime.now(timezone.utc)
             for k, v in kwargs.items():
                 setattr(sc, k, v)
             s.add(sc)
@@ -370,10 +388,13 @@ async def _optimise_task(
         _db_update(scenario_id, "qpso_selecting")
 
         from phase1_world_state import (
-            apply_loads_to_graph, generate_synthetic_congestion,
+            apply_loads_to_graph,
+            generate_synthetic_congestion,
         )
         from phase3_qubo import (
-            MU_SWITCH_PENALTY_S, build_qubo, compute_lambda,
+            MU_SWITCH_PENALTY_S,
+            build_qubo,
+            compute_lambda,
         )
 
         congestion_state = generate_synthetic_congestion(
@@ -847,6 +868,7 @@ async def get_scenario_routes(scenario_id: int, session: Session = Depends(get_s
 
 # Mount static frontend
 from fastapi.staticfiles import StaticFiles
+
 _STATIC_DIR = Path(__file__).parent.parent / "frontend"
 _STATIC_DIR.mkdir(exist_ok=True)
 app.mount("/", StaticFiles(directory=str(_STATIC_DIR), html=True), name="frontend")
