@@ -21,6 +21,14 @@ uvicorn[standard]>=0.30.1
 sqlmodel>=0.0.19
 httpx>=0.27.0
 
+# Database drivers
+# psycopg2-binary — sync PostgreSQL driver for Neon / SQLAlchemy (production)
+psycopg2-binary>=2.9.9
+# python-dotenv — loads DATABASE_URL (and other env vars) from a .env file
+#                 during local development; no effect in production if .env
+#                 is absent or the var is already set in the environment.
+python-dotenv>=1.0.0
+
 # Phase 9 (optional server-side rendering / data export)
 pandas>=2.2.2
 matplotlib>=3.9.0   # for offline plot generation / acceptance tests

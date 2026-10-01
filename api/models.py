@@ -1,12 +1,20 @@
 """
-Phase 7 — Database Models (SQLite via SQLModel)
-================================================
-No paid DB hosting — SQLite file at data/routeiq.db.
+Phase 7 — Database Models (Neon PostgreSQL via SQLModel)
+=========================================================
+Production: Neon.tech serverless PostgreSQL — set the DATABASE_URL
+environment variable to your Neon connection string, e.g.:
+
+    DATABASE_URL=postgresql://user:password@ep-xxx.us-east-2.aws.neon.tech/routeiq?sslmode=require
+
+Development fallback: if DATABASE_URL is not set, falls back to a local
+SQLite file at data/routeiq.db so local development needs no extra setup.
+
 Uses SQLModel (wraps SQLAlchemy + Pydantic) for zero-boilerplate ORM.
 """
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
@@ -14,17 +22,41 @@ from typing import List, Optional
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 # ---------------------------------------------------------------------------
-# Engine — SQLite, no hosting required
+# Engine — Neon PostgreSQL (production) or SQLite (local fallback)
 # ---------------------------------------------------------------------------
-_DB_DIR = Path(__file__).parent.parent / "data"
-_DB_DIR.mkdir(exist_ok=True)
-DATABASE_URL = f"sqlite:///{_DB_DIR / 'routeiq.db'}"
 
-engine = create_engine(
-    DATABASE_URL,
-    echo=False,
-    connect_args={"check_same_thread": False},
-)
+_DATABASE_URL = os.environ.get("DATABASE_URL", "")
+
+if _DATABASE_URL:
+    # ── Neon / PostgreSQL ────────────────────────────────────────────────────
+    # Neon connection strings may start with "postgres://" (older libpq style).
+    # SQLAlchemy 1.4+ requires "postgresql://", so we normalise it here.
+    if _DATABASE_URL.startswith("postgres://"):
+        _DATABASE_URL = _DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+    DATABASE_URL = _DATABASE_URL
+
+    engine = create_engine(
+        DATABASE_URL,
+        echo=False,
+        # pool_pre_ping sends a cheap "SELECT 1" before handing out each
+        # connection, so Neon's auto-suspend is recovered from gracefully.
+        pool_pre_ping=True,
+        # Neon free tier allows up to 10 connections; keep a small pool.
+        pool_size=5,
+        max_overflow=5,
+    )
+else:
+    # ── Local SQLite fallback ────────────────────────────────────────────────
+    _DB_DIR = Path(__file__).parent.parent / "data"
+    _DB_DIR.mkdir(exist_ok=True)
+    DATABASE_URL = f"sqlite:///{_DB_DIR / 'routeiq.db'}"
+
+    engine = create_engine(
+        DATABASE_URL,
+        echo=False,
+        connect_args={"check_same_thread": False},
+    )
 
 
 def create_db() -> None:

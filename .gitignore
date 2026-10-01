@@ -1,10 +1,13 @@
+# Render / deployment artefacts
+__pycache__/
+*.py[cod]
+*.pyo
+
 # Virtual environment
 .venv/
 venv/
 
-# Python cache
-__pycache__/
-*.py[cod]
+
 
 # Application/database data
 data/
@@ -12,9 +15,11 @@ data/
 # Cache
 cache/
 
-# Environment variables
+# Environment variables — NEVER commit secrets
 .env
-.env.*
+.env.local
+.env.production
+# .env.example is intentionally NOT ignored (it's a safe template)
 
 # IDE
 .vscode/
