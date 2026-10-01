@@ -25,6 +25,15 @@ Traffic: SIMULATED via BPR model — no live traffic API, no paid data.
 """
 from __future__ import annotations
 
+# Load .env file first so DATABASE_URL (and other env vars) are available
+# before any module-level code reads os.environ.  No-op if .env is absent
+# or the var is already present in the environment (e.g. on Render / Railway).
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv not installed — rely on env vars being set externally
+
 import asyncio
 import json
 import logging
@@ -74,13 +83,15 @@ logging.basicConfig(
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
+# NOTE: lifespan is defined below (after the import block) and passed here.
+# We use a forward reference via a wrapper — FastAPI resolves it at runtime.
 
 app = FastAPI(
     title="RouteIQ API",
     description=(
         "System-optimal multi-vehicle route assignment (QPSO-hybrid). "
         "Congestion is SIMULATED (BPR model), not live traffic data. "
-        "Free/open-source stack: OSMnx, FastAPI, SQLite, MapLibre GL JS."
+        "Free/open-source stack: OSMnx, FastAPI, Neon PostgreSQL, MapLibre GL JS."
     ),
     version="0.7.0",
 )
@@ -93,12 +104,63 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from contextlib import asynccontextmanager
 
-@app.on_event("startup")
-def on_startup() -> None:
+# Module-level default graph — pre-loaded at startup so Create Scenario is instant
+_default_graph: Any = None
+_DEFAULT_CENTER = (23.0285, 72.5546)
+_DEFAULT_RADIUS = 1000.0
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Modern FastAPI lifespan handler.
+
+    Startup:
+      1. Create / migrate DB tables in Neon PostgreSQL or local SQLite.
+      2. Pre-download the default OSMnx graph in a thread so the first
+         POST /scenarios returns in <1 s instead of 10-30 s.
+    """
+    global _default_graph
+
+    # 1. Database tables
     create_db()
-    log.info("SQLite database initialised.")
+    log.info("Database tables created / verified (Neon or SQLite).")
 
+    # 2. Pre-cache the default Navrangpura graph
+    log.info(
+        "Pre-loading default OSMnx graph (lat=%.4f, lon=%.4f, r=%.0fm) ...",
+        _DEFAULT_CENTER[0], _DEFAULT_CENTER[1], _DEFAULT_RADIUS,
+    )
+    try:
+        from phase1_world_state import download_graph, enrich_graph
+        _disk_cache = _HERE.parent / "data" / "phase1_graph.pkl"
+
+        G = await asyncio.to_thread(
+            download_graph,
+            center=_DEFAULT_CENTER,
+            radius_m=_DEFAULT_RADIUS,
+            cache_path=_disk_cache,   # persists to disk; reused on next cold start
+        )
+        _default_graph = await asyncio.to_thread(enrich_graph, G)
+        log.info(
+            "Default graph ready: %d nodes, %d edges.",
+            _default_graph.number_of_nodes(),
+            _default_graph.number_of_edges(),
+        )
+    except Exception as exc:
+        # Non-fatal — will download on first request instead
+        log.warning("Startup graph pre-load failed (%s). Will download on demand.", exc)
+        _default_graph = None
+
+    yield  # server runs here
+
+    log.info("RouteIQ shutting down.")
+
+
+# Register lifespan now that it is fully defined
+app.router.lifespan_context = lifespan
 
 # ---------------------------------------------------------------------------
 # WebSocket connection manager
@@ -525,19 +587,43 @@ def health():
 
 
 @app.post("/scenarios", response_model=ScenarioRead, status_code=201)
-def create_scenario(
+async def create_scenario(
     body:    ScenarioCreate,
     session: Session = Depends(get_session),
 ) -> Scenario:
     """
     Create a new scenario. Samples valid O-D pairs from the road network.
-    Graph is downloaded (OSMnx / free OSM data) and cached in memory.
+
+    If the requested area matches the default centre (Navrangpura, 1000 m),
+    reuses the graph pre-loaded at startup — returns in < 1 s.
+    For custom locations, downloads on-demand in a thread pool so the event
+    loop is never blocked and Render's 30-second timeout is not hit.
     """
     import networkx as nx
     from phase1_world_state import download_graph, enrich_graph
 
-    G     = download_graph(center=(body.center_lat, body.center_lon), radius_m=body.radius_m)
-    G     = enrich_graph(G)
+    # ── Use pre-cached default graph if coords match ─────────────────────────
+    is_default = (
+        abs(body.center_lat - _DEFAULT_CENTER[0]) < 0.001 and
+        abs(body.center_lon - _DEFAULT_CENTER[1]) < 0.001 and
+        abs(body.radius_m   - _DEFAULT_RADIUS)    < 10.0
+    )
+
+    if is_default and _default_graph is not None:
+        G = _default_graph
+        log.info("create_scenario: using pre-cached default graph (instant).")
+    else:
+        log.info(
+            "create_scenario: downloading custom graph (lat=%.4f, lon=%.4f, r=%.0fm) ...",
+            body.center_lat, body.center_lon, body.radius_m,
+        )
+        G = await asyncio.to_thread(
+            download_graph,
+            center=(body.center_lat, body.center_lon),
+            radius_m=body.radius_m,
+        )
+        G = await asyncio.to_thread(enrich_graph, G)
+
     nodes = list(G.nodes())
 
     rng      = random.Random(42)
@@ -549,7 +635,8 @@ def create_scenario(
             od_pairs.append([int(o), int(d)])
         attempts += 1
 
-    sc = Scenario.model_validate(body)
+    # model_dump() required for both SQLite and Neon PostgreSQL compatibility
+    sc = Scenario.model_validate(body.model_dump())
     sc.od_pairs_json = json.dumps(od_pairs)
     sc.status        = "created"
     session.add(sc)
@@ -557,7 +644,7 @@ def create_scenario(
     session.refresh(sc)
 
     _graph_cache[sc.id] = G
-    log.info("Created scenario %d — %d vehicles, %d O-D pairs sampled",
+    log.info("Created scenario %d — %d vehicles, %d O-D pairs sampled.",
              sc.id, sc.num_vehicles, len(od_pairs))
     return sc
 

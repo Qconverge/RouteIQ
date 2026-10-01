@@ -1,0 +1,64 @@
+# render.yaml — Render.com deployment configuration for RouteIQ
+# Docs: https://render.com/docs/infrastructure-as-code
+#
+# Deploy steps:
+#   1. Push this repo to GitHub / GitLab.
+#   2. In Render dashboard → New → Web Service → connect your repo.
+#   3. Render auto-detects this file and pre-fills all settings.
+#   4. Set DATABASE_URL as an Environment Secret (see envVars below).
+#   5. Click "Create Web Service".
+
+services:
+  - type: web
+    name: routeiq
+    runtime: python
+
+    # ── Python version ────────────────────────────────────────────────────────
+    # Render reads PYTHON_VERSION from env vars to select the runtime.
+    # 3.11 is the fastest for numpy-heavy workloads on Render's free tier.
+
+    # ── Build ─────────────────────────────────────────────────────────────────
+    buildCommand: pip install -r requirements.txt
+
+    # ── Start ─────────────────────────────────────────────────────────────────
+    # - host 0.0.0.0   : required — Render's load balancer reaches the container
+    # - port $PORT      : Render assigns a dynamic port via the $PORT env var
+    # - workers 1       : single worker avoids duplicated in-memory graph caches
+    # - timeout-keep-alive 75 : keeps WebSocket connections alive through Render's
+    #                           60-second idle timeout on the free plan
+    startCommand: >-
+      uvicorn api.app:app
+      --host 0.0.0.0
+      --port $PORT
+      --workers 1
+      --timeout-keep-alive 75
+
+    # ── Health check ──────────────────────────────────────────────────────────
+    # Render polls this path; a 200 response marks the deploy as healthy.
+    healthCheckPath: /health
+
+    # ── Auto-deploy on push ───────────────────────────────────────────────────
+    autoDeploy: true
+
+    # ── Environment variables ─────────────────────────────────────────────────
+    envVars:
+      # Python runtime version
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+
+      # Neon PostgreSQL connection string.
+      # sync: false  →  Render will NOT generate this automatically.
+      # You MUST paste your Neon connection string in the Render dashboard
+      # under Environment → Secret Files / Environment Variables.
+      # Format:
+      #   postgresql://user:password@ep-xxx.ap-southeast-1.aws.neon.tech/neondb?sslmode=require
+      - key: DATABASE_URL
+        sync: false
+
+      # Suppress OSMnx's "new version available" network check on every import
+      - key: OSMNX_CACHE_FOLDER
+        value: /tmp/osmnx_cache
+
+      # Tell uvicorn / Python that the app is behind Render's TLS proxy
+      - key: FORWARDED_ALLOW_IPS
+        value: "*"
